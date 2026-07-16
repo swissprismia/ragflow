@@ -1444,8 +1444,21 @@ class LiteLLMBase(ABC):
                 self.api_key = key
                 self.provider_order = ""
         elif self.provider == SupportedLiteLLMProvider.Azure_OpenAI:
-            self.api_key = json.loads(key).get("api_key", "")
-            self.api_version = json.loads(key).get("api_version", "2024-02-01")
+            # >>> fork:fix-azure-rawkey
+            try:
+                key_obj = json.loads(key) if isinstance(key, str) else key
+            except (JSONDecodeError, TypeError):
+                key_obj = None
+            if isinstance(key_obj, dict):
+                self.api_key = key_obj.get("api_key", "")
+                self.api_version = key_obj.get("api_version", "2024-02-01")
+            else:
+                # The key was passed as a raw string (e.g. the provider
+                # verify-connection path) rather than the JSON blob the UI
+                # normally stores. Treat it as the api_key directly.
+                self.api_key = key
+                self.api_version = "2024-02-01"
+            # <<< fork:fix-azure-rawkey
         elif self.provider == SupportedLiteLLMProvider.MiniMax:
             # MiniMax requires GroupId as a query parameter for API authentication
             try:
