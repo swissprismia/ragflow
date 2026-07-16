@@ -256,7 +256,12 @@ class SyncLogsService(CommonService):
                 cls.model.update_date < expr
             )
 
-        query = query.distinct().order_by(cls.model.update_time.desc())
+        # >>> fork:fix-pg-distinct
+        # Postgres requires SELECT DISTINCT order-by columns to be in the select
+        # list; `update_date` is selected above (and orders identically to
+        # update_time). MySQL is lenient, which is why this only broke on Postgres.
+        query = query.distinct().order_by(cls.model.update_date.desc())
+        # <<< fork:fix-pg-distinct
         total = query.count()
         if page_number:
             query = query.paginate(page_number, items_per_page)
