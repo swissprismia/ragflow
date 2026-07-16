@@ -2113,6 +2113,39 @@ class PostgreSQL(_RDBMSBase):
     DEFAULT_PORT: int = 5432
 
 
+# >>> fork:xwiki
+class XWiki(SyncBase):
+    SOURCE_NAME: str = FileSource.XWIKI
+
+    def _get_source_prefix(self):
+        return "XWiki"
+
+    async def _generate(self, task: dict):
+        from common.data_source.xwiki_connector import XWikiConnector
+
+        self.connector = XWikiConnector(
+            wiki_base=self.conf["wiki_base"],
+            wiki=self.conf.get("wiki", "xwiki"),
+            space=self.conf.get("space", ""),
+            index_mode=self.conf.get("index_mode", "everything"),
+            batch_size=self.conf.get("batch_size") or INDEX_BATCH_SIZE,
+            skip_hidden=self.conf.get("skip_hidden", True),
+        )
+        self.connector.load_credentials(self.conf.get("credentials") or {})
+
+        if task["reindex"] == "1" or not task["poll_range_start"]:
+            document_generator = self.connector.load_from_state()
+        else:
+            document_generator = self.connector.poll_source(
+                task["poll_range_start"].timestamp(),
+                datetime.now(timezone.utc).timestamp(),
+            )
+
+        self.log_connection("XWiki", self.conf.get("wiki_base", ""), task)
+        return document_generator
+# <<< fork:xwiki
+
+
 class REST_API(SyncBase):
     SOURCE_NAME: str = FileSource.REST_API
 
@@ -2175,6 +2208,7 @@ func_factory = {
     FileSource.POSTGRESQL: PostgreSQL,
     FileSource.DINGTALK_AI_TABLE: DingTalkAITable,
     FileSource.REST_API: REST_API,
+    FileSource.XWIKI: XWiki,  # fork:xwiki
 }
 
 

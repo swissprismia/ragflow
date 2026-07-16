@@ -159,6 +159,9 @@ class FileSource(StrEnum):
     OUTLOOK = "outlook"
     SALESFORCE = "salesforce"
     AZURE_BLOB = "azure_blob"
+    # >>> fork:xwiki
+    XWIKI = "xwiki"
+    # <<< fork:xwiki
 
 
 class PipelineTaskType(StrEnum):
