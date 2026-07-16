@@ -80,6 +80,9 @@ class DocumentSource(str, Enum):
     SALESFORCE = "salesforce"
     AZURE_BLOB = "azure_blob"
     AZURE_DEVOPS = "azure_devops"
+    # >>> fork:xwiki
+    XWIKI = "xwiki"
+    # <<< fork:xwiki
 
 
 class FileOrigin(str, Enum):
