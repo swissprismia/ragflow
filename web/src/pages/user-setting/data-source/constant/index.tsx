@@ -11,12 +11,14 @@ import GoogleDriveTokenField from '../component/google-drive-token-field';
 import { IDataSourceInfoMap } from '../interface';
 import { bitbucketConstant } from './bitbucket-constant';
 import { confluenceConstant } from './confluence-constant';
+import { xwikiConstant } from './xwiki-constant';
 import { jiraConstant } from './jira-constant';
 import { S3Constant } from './s3-constant';
 import { seafileConstant } from './seafile-constant';
 
 export enum DataSourceKey {
   CONFLUENCE = 'confluence',
+  XWIKI = 'xwiki',
   NOTION = 'notion',
   GOOGLE_DRIVE = 'google_drive',
   GMAIL = 'gmail',
@@ -216,6 +218,11 @@ export const generateDataSourceInfo = (t: TFunction) => {
       name: 'Confluence',
       description: t(`setting.${DataSourceKey.CONFLUENCE}Description`),
       icon: <SvgIcon name={'data-source/confluence'} width={38} />,
+    },
+    [DataSourceKey.XWIKI]: {
+      name: 'XWiki',
+      description: t(`setting.${DataSourceKey.XWIKI}Description`),
+      icon: <SvgIcon name={'data-source/xwiki'} width={38} />,
     },
     [DataSourceKey.GOOGLE_DRIVE]: {
       name: 'Google Drive',
@@ -844,6 +851,7 @@ export const DataSourceFormFields = {
   ],
 
   [DataSourceKey.CONFLUENCE]: confluenceConstant(t),
+  [DataSourceKey.XWIKI]: xwikiConstant(t),
   [DataSourceKey.GOOGLE_DRIVE]: [
     {
       label: 'Primary Admin Email',
@@ -1836,6 +1844,21 @@ export const DataSourceFormDefaultValues = {
       credentials: {
         confluence_username: '',
         confluence_access_token: '',
+      },
+      index_mode: 'everything',
+    },
+  },
+  [DataSourceKey.XWIKI]: {
+    name: '',
+    source: DataSourceKey.XWIKI,
+    config: {
+      wiki_base: '',
+      wiki: 'xwiki',
+      space: '',
+      skip_hidden: true,
+      credentials: {
+        username: '',
+        password: '',
       },
       index_mode: 'everything',
     },
