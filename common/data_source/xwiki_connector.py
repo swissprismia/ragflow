@@ -22,6 +22,7 @@ Configuration (stored on the connector row, under ``config``)::
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
 from urllib.parse import quote
@@ -81,11 +82,61 @@ class XWikiConnector(LoadConnector, PollConnector):
         token = credentials.get("token") or credentials.get("api_key")
         username = credentials.get("username")
         password = credentials.get("password")
+        # Azure managed-identity OAuth: fetch a bearer token for the configured
+        # resource/audience so the connector can pass Container Apps EasyAuth
+        # (Entra) without a static credential. Enabled via the connector config
+        # or env (XWIKI_OAUTH_RESOURCE), so the RAGFlow UI only needs wiki_base.
+        mi_resource = credentials.get("azure_oauth_resource") or os.environ.get("XWIKI_OAUTH_RESOURCE")
+        mi_client_id = credentials.get("azure_mi_client_id") or os.environ.get("XWIKI_OAUTH_MI_CLIENT_ID")
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
         elif username and password is not None:
             self._auth = requests.auth.HTTPBasicAuth(str(username), str(password))
+        elif mi_resource:
+            self._headers["Authorization"] = f"Bearer {self._fetch_msi_token(mi_resource, mi_client_id)}"
         return None
+
+    def _fetch_msi_token(self, resource: str, client_id: Optional[str] = None) -> str:
+        """Fetch an Entra access token from the platform managed-identity endpoint.
+
+        Supports Azure Container Apps / App Service (``IDENTITY_ENDPOINT`` +
+        ``IDENTITY_HEADER``) and falls back to IMDS. ``resource`` is the target
+        audience (e.g. ``api://<app-id>``); ``client_id`` selects a specific
+        user-assigned identity (omit for the system-assigned one). Fetched per
+        sync, so tokens stay fresh without manual rotation.
+        """
+        identity_endpoint = os.environ.get("IDENTITY_ENDPOINT")
+        identity_header = os.environ.get("IDENTITY_HEADER")
+        if identity_endpoint and identity_header:
+            params: Dict[str, str] = {"resource": resource, "api-version": "2019-08-01"}
+            if client_id:
+                params["client_id"] = client_id
+            resp = requests.get(
+                identity_endpoint,
+                headers={"X-IDENTITY-HEADER": identity_header},
+                params=params,
+                timeout=self.request_timeout,
+            )
+        else:  # IMDS fallback (VMs / classic MSI)
+            params = {"resource": resource, "api-version": "2018-02-01"}
+            if client_id:
+                params["client_id"] = client_id
+            resp = requests.get(
+                "http://169.254.169.254/metadata/identity/oauth2/token",
+                headers={"Metadata": "true"},
+                params=params,
+                timeout=self.request_timeout,
+            )
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise ConnectorMissingCredentialError(
+                f"Managed-identity token fetch failed ({resp.status_code}): {resp.text[:200]}"
+            ) from exc
+        tok = resp.json().get("access_token")
+        if not tok:
+            raise ConnectorMissingCredentialError("Managed-identity response contained no access_token.")
+        return tok
 
     # -- HTTP helpers -------------------------------------------------------
 
@@ -156,8 +207,7 @@ class XWikiConnector(LoadConnector, PollConnector):
                 return link.get("href")
         return None
 
-    def _iter_page_links(self) -> Generator[str, None, None]:
-        base = self._pages_collection_url()
+    def _iter_pages_at(self, base: str) -> Generator[str, None, None]:
         start = 0
         while True:
             payload = self._get_json(base, params={"start": start, "number": self.page_size})
@@ -171,6 +221,51 @@ class XWikiConnector(LoadConnector, PollConnector):
             if len(summaries) < self.page_size:
                 break
             start += self.page_size
+
+    def _space_pages_urls(self) -> List[str]:
+        """In space mode, return the pages-collection URL for the root space plus
+        every nested descendant space.
+
+        XWiki lists nested spaces flat under ``/wikis/<wiki>/spaces``; each entry
+        carries a ``rel=.../pages`` link whose href encodes its full hierarchical
+        path (``.../spaces/Root/spaces/Child/pages``). The hierarchical
+        ``/spaces/<root>/spaces`` sub-resource does *not* enumerate descendants,
+        so we filter the flat listing by path prefix instead.
+        """
+        segments = [quote(s, safe="") for s in self.space.split(".") if s]
+        root_path = "/spaces/" + "/spaces/".join(segments)       # .../spaces/A/spaces/B
+        descendant_marker = root_path + "/spaces/"               # children live below this
+        root_pages = self._rest(f"wikis/{self.wiki}{root_path}/pages")
+        urls: List[str] = [root_pages]
+        seen = {root_pages}
+        spaces_url = self._rest(f"wikis/{self.wiki}/spaces")
+        start = 0
+        while True:
+            payload = self._get_json(spaces_url, params={"start": start, "number": self.page_size})
+            spaces = payload.get("spaces", []) if isinstance(payload, dict) else []
+            spaces = [s for s in spaces if isinstance(s, dict)]
+            if not spaces:
+                break
+            for space in spaces:
+                href = None
+                for link in space.get("links", []) or []:
+                    if str(link.get("rel", "")).endswith("/rel/pages"):
+                        href = link.get("href")
+                        break
+                if href and descendant_marker in href and href not in seen:
+                    seen.add(href)
+                    urls.append(href)
+            if len(spaces) < self.page_size:
+                break
+            start += self.page_size
+        return urls
+
+    def _iter_page_links(self) -> Generator[str, None, None]:
+        if self.index_mode == "space" and self.space:
+            for pages_url in self._space_pages_urls():
+                yield from self._iter_pages_at(pages_url)
+        else:
+            yield from self._iter_pages_at(self._rest(f"wikis/{self.wiki}/pages"))
 
     # -- Page → Document ----------------------------------------------------
 
@@ -188,14 +283,22 @@ class XWikiConnector(LoadConnector, PollConnector):
 
         title = page.get("title") or page.get("name") or page.get("fullName") or ""
         full_name = page.get("fullName") or page.get("id") or href
-        body = (f"# {title}\n\n{content}" if title else content).encode("utf-8")
+        url = page.get("xwikiAbsoluteUrl") or page.get("xwikiRelativeUrl")
+
+        # Prepend the source link into the body so it rides inside the indexed
+        # content and renders as a clickable link in RAGFlow's chunk/citation
+        # viewer (RAGFlow does not surface document meta_fields in the retrieval
+        # UI, so the URL has to travel in the content itself). Kept in metadata
+        # too, for retrieval-time filtering / API consumers.
+        header = f"# {title}\n\n" if title else ""
+        source_line = f"[View in XWiki »]({url})\n\n" if url else ""
+        body = f"{header}{source_line}{content}".encode("utf-8")
         updated_at = self._parse_modified(page.get("modified"))
 
         metadata: Dict[str, Any] = {}
         for key in ("space", "wiki", "version", "author"):
             if page.get(key):
                 metadata[key] = str(page[key])
-        url = page.get("xwikiAbsoluteUrl") or page.get("xwikiRelativeUrl")
         if url:
             metadata["url"] = str(url)
 

@@ -1533,6 +1533,18 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
         'The Base URL of your Confluence instance (e.g., https://your-domain.atlassian.net/wiki)',
       confluenceSpaceKeyTip:
         'Optional: Specify a space key to limit syncing to a specific space. Leave empty to sync all accessible spaces. For multiple spaces, separate with commas (e.g., DEV,DOCS,HR)',
+      xwikiDescription:
+        'Sync pages from an XWiki instance via its REST API. Works with internal/self-hosted XWiki servers.',
+      xwikiWikiBaseUrlTip:
+        'Base URL of your XWiki instance, without a trailing slash and without /rest (e.g., http://host.docker.internal:8080 or https://wiki.example.com/xwiki). Use host.docker.internal to reach a wiki running on the Docker host.',
+      xwikiWikiIdTip:
+        'The XWiki wiki identifier. Defaults to "xwiki" for the main wiki.',
+      xwikiCredentialsTip:
+        'Optional. Leave blank for anonymous access. Provide a username + password for HTTP Basic auth, or put a Bearer token in the Password / Token field.',
+      xwikiSpaceKeyTip:
+        'Required when Index Mode is "Space". The space key to index; use dotted notation for nested spaces (e.g., Parent.Child).',
+      xwikiSkipHiddenTip:
+        'Skip hidden XWiki system/technical pages (recommended). Only real content pages are indexed.',
       s3PrefixTip: `Specify the folder path within your S3 bucket to fetch files from.
 Example: general/v2/`,
       S3CompatibleEndpointUrlTip: `Required for S3 compatible Storage Box. Specify the S3-compatible endpoint URL.
